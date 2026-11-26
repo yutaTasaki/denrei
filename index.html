@@ -161,6 +161,9 @@
   .savebox .confirm p { color: var(--ink); }
   .savebox .savemsg { margin: 8px 0 4px; min-height: 1.4em; color: var(--green); font-weight: 700; }
   .savebox .savemsg.ng { color: var(--red); }
+  .savebox .token { width: 100%; margin: 0 0 8px; padding: 10px; font: inherit; font-size: 15px; color: var(--ink); background: #0a0418; border: 2px solid var(--line); border-radius: 8px; }
+  .savebox .tokenhelp { font-size: 12px; margin: 6px 0 4px; }
+  .inv.err { color: var(--red); }
   .rivalsay { margin: 14px 0 0; padding: 8px 12px; border: 2px dashed var(--pink); border-radius: 8px; font-size: 14px; color: var(--ink); text-align: left; }
   .rivalsay b { font-family: var(--px); color: var(--pink); margin-right: 6px; }
   .gate-line { text-align: center; font-size: 16px; font-weight: 700; margin: 0 0 8px; padding: 8px; border: 2px solid var(--yellow); border-radius: 8px; color: var(--yellow); }
@@ -623,6 +626,17 @@
           </div>
         </div>
         <p class="savemsg" id="g-save-msg"></p>
+      </div>
+      <p class="rec-h">PC とスマホの同期（kotoba と同じしくみ。記録を GitHub の非公開リポジトリ denrei-data に置く）</p>
+      <div class="savebox">
+        <p id="g-sync-state"></p>
+        <input type="password" class="token" id="g-token" placeholder="GitHub トークン（github_pat_…）" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <div class="row2">
+          <button class="btn plain small" id="g-token-save">トークンを保存</button>
+          <button class="btn plain small" id="g-sync-now">今すぐ同期</button>
+        </div>
+        <p class="savemsg" id="g-sync-msg"></p>
+        <p class="tokenhelp">トークンは、kotoba で使っているものに denrei-data を足して使える（Repository access に denrei-data、Permissions の Contents を Read and write）。トークンはこの端末にだけ保存され、記録の書き出しにも入らない。</p>
       </div>
       <p class="rec-h" id="g-title-line"></p>
       <p class="rec-h">ゲームべつの SPAN（今 ／ 最高）</p>
@@ -2329,6 +2343,26 @@ function parseSave(text) {
   try { return restoreState(raw); } catch (e) { return null; }
 }
 
+// 同期：くらべるのは「端末ごとの設定（音・書き出した日）」を除いた記録
+var DEVICE_ONLY = ['sound', 'lastExport'];
+function recordText(s) {
+  var o = {}, k;
+  for (k in s) if (DEVICE_ONLY.indexOf(k) < 0) o[k] = s[k];
+  return JSON.stringify(o);
+}
+// 同期のしかたを決める。base = 前回そろえたときの記録（はじめての端末では null）
+// 'none' 同じ ／ 'push' この端末の方を送る ／ 'pull' 同期先の方を取る
+// 'conflict-local' / 'conflict-remote' 両方で遊んでいた：届けた件数が多い方を残す（少ない方は conflicts/ に保存）
+function syncDecide(localText, remoteText, base, localTotal, remoteTotal) {
+  if (remoteText === null || remoteText === undefined) return 'push';
+  if (localText === remoteText) return 'none';
+  if (!localTotal && remoteTotal > 0) return 'pull';           // まっさらな端末は、送らずに取るだけ
+  var lc = localText !== base, rc = remoteText !== base;
+  if (lc && !rc) return 'push';
+  if (!lc && rc) return 'pull';
+  return (localTotal || 0) >= (remoteTotal || 0) ? 'conflict-local' : 'conflict-remote';
+}
+
 // 機械での確かめ用
 (typeof globalThis !== 'undefined' ? globalThis : window).DENREI = {
   normalize: normalize, makeQuestion: makeQuestion, grade: grade, orderOk: orderOk,
@@ -2340,7 +2374,7 @@ function parseSave(text) {
   TRIPLE_REWARD: TRIPLE_REWARD, TROPHIES: TROPHIES, KINDS: KINDS, kindOf: kindOf, posOf: posOf, weakKind: weakKind, weekKey: weekKey,
   MEMS: MEMS, CARGO: CARGO, GRID: GRID, memById: memById, makeMem: makeMem, gradeSeq: gradeSeq, gradeSet: gradeSet, pickJob: pickJob, cellName: cellName,
   STRESS: STRESS, STRESS_LEVELS: STRESS_LEVELS, alertChance: alertChance, makeDistractors: makeDistractors, NAGS: NAGS,
-  restoreState: restoreState, makeSave: makeSave, parseSave: parseSave,
+  restoreState: restoreState, makeSave: makeSave, parseSave: parseSave, recordText: recordText, syncDecide: syncDecide,
   RIVALS: RIVALS, rivalTier: rivalTier, rivalOf: rivalOf, duelTarget: duelTarget, DUEL_REWARD: DUEL_REWARD, FIRST_REWARD: FIRST_REWARD,
   RIVAL_GATE_WAIT: RIVAL_GATE_WAIT, isRankLine: isRankLine, EXAM_REWARD: EXAM_REWARD, FEVER_EVERY: FEVER_EVERY, FEVER_PAY: FEVER_PAY,
   twistChance: twistChance, TWIST_PAY: TWIST_PAY, STICKERS: STICKERS, STICKER_RATE: STICKER_RATE, STICKER_DUP: STICKER_DUP, rollSticker: rollSticker,
@@ -2475,7 +2509,8 @@ function today() { return fmtDate(new Date()); }
 function load() {
   try { return restoreState(JSON.parse(localStorage.getItem(STORE_KEY) || 'null')); } catch (e) { return newState(); }
 }
-function save() { try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) {} }
+function saveLocal() { try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) {} }
+function save() { saveLocal(); if (typeof scheduleSync === 'function') scheduleSync(); }
 function show(id) {
   var list = document.querySelectorAll('.screen');
   for (var i = 0; i < list.length; i++) list[i].classList.toggle('active', list[i].id === id);
@@ -2548,6 +2583,7 @@ function showHome() {
   hv.append('🛒 ' + (!goal ? '乗り物はぜんぶ持っている' : state.cash >= goal.price ? goal.icon + ' ' + goal.name + ' が買える！（進むのが速くなる）'
     : '次の乗り物 ' + goal.icon + ' まで あと $' + money(goal.price - state.cash)) + (inv ? '　' + inv : ''));
   setSeg($('h-job'), 'job', state.job);
+  if (syncState === 'error') { hv.className = 'inv err'; hv.textContent = '⚠ 同期できていない（RECORD で確認）'; }
   roadInto($('h-next'), $('h-left'), $('h-roadbar'), state.miles);
   var ms = $('h-mission'), todays = missionsFor(t), dn = state.day.date === t ? state.day.missions : [];
   var left = todays.filter(function (m) { return dn.indexOf(m.id) < 0; });
@@ -3373,6 +3409,8 @@ function svg(tag, attrs, text) {
 function shortDate(s) { var p = s.split('-'); return (+p[1]) + '/' + (+p[2]); }
 function showRecord() {
   if (typeof renderSave === 'function') { pending = null; renderSave(''); }
+  $('g-token').value = ''; $('g-token').placeholder = ghToken() ? 'トークンは保存ずみ（変えるときだけ入れる。空で保存すると消える）' : 'GitHub トークン（github_pat_…）';
+  renderSync('');
   token++; cur = null;
   var wins = state.bossDates.length, title = titleOf(wins);
   $('g-best').textContent = state.best;
@@ -3496,6 +3534,124 @@ function drawChart(pts) {
 }
 $('g-back').addEventListener('click', function () { SFX.click(); showHome(); });
 
+/* ---- 同期（GitHub の非公開リポジトリ denrei-data / state.json） ---- */
+var GH = { owner: 'yutaTasaki', repo: 'denrei-data', path: 'state.json' };
+var SYNC_KEYS = { token: 'denrei.ghToken', base: 'denrei.sync.base', at: 'denrei.sync.at', err: 'denrei.sync.err', force: 'denrei.sync.force' };
+var syncState = 'off', syncBusy = false, syncAgain = false, syncTimer = null;
+function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+function lsSet(k, v) { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) {} }
+function ghToken() { return (lsGet(SYNC_KEYS.token) || '').trim(); }
+function screenId() { var a = document.querySelector('.screen.active'); return a ? a.id : ''; }
+function b64enc(t) { return btoa(unescape(encodeURIComponent(t))); }
+function b64dec(t) { return decodeURIComponent(escape(atob(String(t).replace(/\s/g, '')))); }
+function ghErr(msg, status) { var e = new Error(msg); e.status = status; return e; }
+function ghFetch(url, opt) {
+  var ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  if (ctl) { opt.signal = ctl.signal; setTimeout(function () { ctl.abort(); }, 20000); }
+  return fetch(url, opt);
+}
+function ghUrl(path) { return 'https://api.github.com/repos/' + GH.owner + '/' + GH.repo + '/contents/' + path; }
+async function ghGet(token, path) {
+  var res = await ghFetch(ghUrl(path), { headers: { Authorization: 'Bearer ' + token, Accept: 'application/vnd.github+json' }, cache: 'no-store' });
+  if (res.status === 404) return { text: null, sha: null };
+  if (!res.ok) throw ghErr('GET ' + res.status, res.status);
+  var j = await res.json();
+  return { text: b64dec(j.content || ''), sha: j.sha };
+}
+async function ghPut(token, path, text, sha, message) {
+  var body = { message: message, content: b64enc(text) };
+  if (sha) body.sha = sha;
+  var res = await ghFetch(ghUrl(path), { method: 'PUT', headers: { Authorization: 'Bearer ' + token, Accept: 'application/vnd.github+json' }, body: JSON.stringify(body) });
+  if (!res.ok) throw ghErr('PUT ' + res.status, res.status);
+}
+function syncErrText(e) {
+  var st = e && e.status;
+  if (st === 401 || st === 403) return 'denrei-data に入れない。トークンが切れたか、denrei-data が許可に入っていない（' + st + '）';
+  if (st === 404) return 'denrei-data が見つからない。トークンの Repository access に denrei-data を足すこと（404）';
+  if (st) return '同期できなかった（' + st + '）';
+  if (e && e.name === 'AbortError') return '時間がかかりすぎた（電波の良い所で「今すぐ同期」）';
+  return '同期できなかった（通信できない' + (e && e.message && e.message !== 'Failed to fetch' ? '：' + String(e.message).slice(0, 80) : '') + '）';
+}
+function fmtTime(iso) { var d = new Date(iso); return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2); }
+function setSync(st, msg) {
+  syncState = st;
+  if (st === 'error') lsSet(SYNC_KEYS.err, msg || '同期できなかった');
+  if (st === 'synced') { lsSet(SYNC_KEYS.err, null); lsSet(SYNC_KEYS.at, new Date().toISOString()); }
+  renderSync(st === 'synced' ? msg : '');
+  if (screenId() === 's-home' && !cur) { var hv = $('h-inv'); if (st === 'error') { hv.className = 'inv err'; hv.textContent = '⚠ 同期できていない（RECORD で確認）'; } }
+}
+function renderSync(msg) {
+  var at = lsGet(SYNC_KEYS.at), err = lsGet(SYNC_KEYS.err), t = {
+    off: '同期していない（トークンが入っていない）', unsynced: '未同期', syncing: '同期中…', waiting: '問題が終わったら同期する',
+    offline: 'オフライン。電波がもどったら同期する', error: '⚠ ' + (err || '同期できなかった'),
+    synced: '同期ずみ' + (at ? '（' + fmtTime(at) + '）' : '')
+  }[syncState] || '';
+  if ($('g-sync-state')) { $('g-sync-state').textContent = t; $('g-sync-state').style.color = syncState === 'error' ? 'var(--red)' : ''; }
+  if (msg !== undefined && $('g-sync-msg')) { $('g-sync-msg').textContent = msg || ''; $('g-sync-msg').className = 'savemsg'; }
+}
+function scheduleSync(ms) {
+  if (!ghToken()) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(function () { syncNow(); }, ms || 2500);
+}
+// 同期先と、この端末の記録をそろえる。問題の途中は待つ（記録が入れかわらないように）
+async function syncNow() {
+  var token = ghToken();
+  if (!token) return setSync('off');
+  if (syncBusy) { syncAgain = true; return; }
+  if (!navigator.onLine) return setSync('offline');
+  var sid = screenId();
+  if (/^s-(listen|distract|input)$/.test(sid)) { setSync('waiting'); return scheduleSync(4000); }
+  var calm = /^s-(home|map|shop|record)$/.test(sid);    // 結果画面では、送るだけ（取りこまない）
+  syncBusy = true; syncAgain = false; setSync('syncing');
+  var note = '';
+  try {
+    var remote = await ghGet(token, GH.path), rState = null;
+    if (remote.text !== null) { rState = parseSave(remote.text); if (!rState) throw ghErr('同期先の state.json が読めない'); }
+    var lt = recordText(state), rt = rState ? recordText(rState) : null;
+    var act = syncDecide(lt, rt, lsGet(SYNC_KEYS.base), state.total, rState ? rState.total : 0);
+    // ファイルから読み込んだ記録は、本人が選んだもの：同期先の方は conflicts に残して、こちらを送る
+    var forced = !!lsGet(SYNC_KEYS.force);
+    if (forced && act !== 'none') act = rt !== null && rt !== lsGet(SYNC_KEYS.base) ? 'conflict-local' : 'push';
+    if ((act === 'pull' || act === 'conflict-remote') && !calm) { syncBusy = false; setSync('waiting'); return; }
+    var stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    if (act === 'conflict-local') {
+      await ghPut(token, 'conflicts/' + stamp + '-other.json', remote.text, null, 'conflict: other device ' + rState.total + ' deliveries');
+      note = forced ? '読み込んだ記録（' + state.total + '件）を同期先に送った。同期先にあった記録（' + rState.total + '件）は denrei-data の conflicts に保存した。'
+        : '両方の端末で遊んでいた。届けた件数が多い、この端末の記録（' + state.total + '件）を残した。もう片方（' + rState.total + '件）は denrei-data の conflicts に保存した。';
+    }
+    if (act === 'conflict-remote') {
+      await ghPut(token, 'conflicts/' + stamp + '-this.json', makeSave(state, today()), null, 'conflict: this device ' + state.total + ' deliveries');
+      note = '両方の端末で遊んでいた。届けた件数が多い、もう片方の記録（' + rState.total + '件）にそろえた。この端末の記録（' + state.total + '件）は denrei-data の conflicts に保存した。';
+    }
+    if (act === 'push' || act === 'conflict-local') {
+      await ghPut(token, GH.path, makeSave(state, today()), remote.sha, 'denrei: ' + state.total + ' deliveries, SPAN ' + state.level + ', $' + state.cash);
+      lsSet(SYNC_KEYS.base, lt); lsSet(SYNC_KEYS.force, null);
+    } else if (act === 'pull' || act === 'conflict-remote') {
+      var keep = {}; DEVICE_ONLY.forEach(function (k) { keep[k] = state[k]; });
+      state = rState; DEVICE_ONLY.forEach(function (k) { state[k] = keep[k]; });
+      saveLocal(); lsSet(SYNC_KEYS.base, rt);
+      if (!note) note = 'もう片方の端末の記録にそろえた（' + state.total + '件・SPAN ' + state.level + '）。';
+      if (sid === 's-home') showHome(); else if (sid === 's-map') showMap(); else if (sid === 's-shop') renderShop(); else if (sid === 's-record') showRecord();
+    } else { lsSet(SYNC_KEYS.base, lt); lsSet(SYNC_KEYS.force, null); }
+    setSync('synced', note);
+  } catch (e) {
+    if (e && e.status === 409) syncAgain = true;          // 同時に書かれた：もう一度
+    else setSync('error', syncErrText(e));
+  } finally { syncBusy = false; }
+  if (syncAgain) { syncAgain = false; scheduleSync(1500); }
+}
+$('g-token-save').addEventListener('click', function () {
+  var v = $('g-token').value.trim();
+  if (!v && ghToken()) { lsSet(SYNC_KEYS.token, null); lsSet(SYNC_KEYS.base, null); SFX.click(); setSync('off'); return renderSync('トークンを消した。この端末は同期しない。'); }
+  if (!/^(github_pat_|ghp_)[A-Za-z0-9_]{20,}$/.test(v)) { SFX.ng(); $('g-sync-msg').textContent = 'トークンの形がちがう（github_pat_ か ghp_ で始まる長い文字）。'; $('g-sync-msg').className = 'savemsg ng'; return; }
+  lsSet(SYNC_KEYS.token, v); $('g-token').value = ''; SFX.coin();
+  renderSync('トークンを保存した。同期する…'); syncNow();
+});
+$('g-sync-now').addEventListener('click', function () { SFX.click(); if (!ghToken()) { $('g-sync-msg').textContent = '先にトークンを保存すること。'; $('g-sync-msg').className = 'savemsg ng'; return; } syncNow(); });
+document.addEventListener('visibilitychange', function () { if (!document.hidden) scheduleSync(300); });
+window.addEventListener('online', function () { scheduleSync(300); });
+
 /* ---- 記録の書き出し・読み込み ---- */
 var pending = null;     // 読み込んだが、まだ入れかえていない記録
 function renderSave(msg, ng) {
@@ -3537,6 +3693,7 @@ $('g-yes').addEventListener('click', function () {
   if (!pending) return;
   var keep = { sound: state.sound };
   state = pending; state.sound = keep.sound; pending = null;
+  lsSet(SYNC_KEYS.force, '1');
   save(); SFX.city(0); showRecord(); renderSave('記録を読み込んだ。' + recordSummary(state));
 });
 $('g-no').addEventListener('click', function () { pending = null; SFX.click(); renderSave('読み込みをやめた。今の記録はそのまま。'); });
@@ -3549,6 +3706,7 @@ if ('speechSynthesis' in window) {
   window.addEventListener('pagehide', function () { try { speechSynthesis.cancel(); } catch (e) {} });
 }
 showHome();
+if (ghToken()) { syncState = 'unsynced'; scheduleSync(600); }   // 画面を出してから同期する
 })();
 </script>
 </body>
