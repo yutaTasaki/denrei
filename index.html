@@ -2354,7 +2354,9 @@ function recordText(s) {
 // 'none' 同じ ／ 'push' この端末の方を送る ／ 'pull' 同期先の方を取る
 // 'conflict-local' / 'conflict-remote' 両方で遊んでいた：届けた件数が多い方を残す（少ない方は conflicts/ に保存）
 function syncDecide(localText, remoteText, base, localTotal, remoteTotal) {
-  if (remoteText === null || remoteText === undefined) return 'push';
+  // まっさらな記録（0件）は送らない：別の場所にある記録より先に、空の記録が同期先に入らないように
+  if (remoteText === null || remoteText === undefined) return localTotal ? 'push' : 'none';
+  if (!localTotal && !remoteTotal) return 'none';
   if (localText === remoteText) return 'none';
   if (!localTotal && remoteTotal > 0) return 'pull';           // まっさらな端末は、送らずに取るだけ
   var lc = localText !== base, rc = remoteText !== base;
