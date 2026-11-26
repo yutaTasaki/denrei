@@ -219,6 +219,9 @@
   #s-distract.numbers .stage { display: none; }
   .mark { height: 38px; font-size: 26px; font-weight: 700; font-family: var(--px); }
   .mark.good { color: var(--green); } .mark.bad { color: var(--red); }
+  .mark.timeup { color: var(--yellow); font-size: 34px; text-shadow: 3px 3px 0 var(--pink); }
+  #i-send:disabled { opacity: .45; }
+  #i-send.again { background: var(--red); color: #fff; box-shadow: 0 5px 0 #8a1f1f; }
   .nums { display: flex; gap: 12px; width: 100%; flex: none; margin-top: 6px; }
   .nums button {
     flex: 1; height: 20vh; min-height: 96px; max-height: 170px;
@@ -681,6 +684,7 @@
    ===================================================================== */
 var MIN_LEVEL = 4, MAX_LEVEL = 15, PER_DAY = 5;
 var DISTRACT_SEC = 25, INTRO_SEC = 2.8;
+var TIMEUP_MS = 1000, INPUT_LOCK_MS = 1200;   // SIDE JOB の後：TIME UP! を見せる時間・答える画面のボタンが効かない時間
 var BOSS_PLUS = 2;                       // 日曜の BIG JOB：いつもより何項目多いか
 var EXTRA_FROM = 6, EXTRA_RATE = 0.4;    // 割り込み：レベル6から、4割の問題で
 var EVENT_RATE = 0.25;                   // 道中の出来事が起きる割合
@@ -2856,9 +2860,15 @@ function startDistract(round) {
     }, function () {
       playing = false;
       game.cleared = game.score >= game.quota;
-      if (two && round === 1) return startDistract(2);
-      if (cur.games.length > 1) cur.game = mergeGames(cur.games);
-      if (cur.q.extra && !cur.q.extra.fix) showInterrupt(); else showInput();
+      // 連打している指が、次の画面のボタンを押してしまわないよう、TIME UP! を1秒見せてから進む
+      $('d-a').disabled = $('d-b').disabled = true;
+      $('d-mark').className = 'mark timeup'; $('d-mark').textContent = 'TIME UP!';
+      setTimeout(function () {
+        if (my !== token) return;
+        if (two && round === 1) return startDistract(2);
+        if (cur.games.length > 1) cur.game = mergeGames(cur.games);
+        if (cur.q.extra && !cur.q.extra.fix) showInterrupt(); else showInput();
+      }, TIMEUP_MS);
     });
   }, INTRO_SEC * 1000);
 }
@@ -2904,6 +2914,7 @@ function tap(which) {
   if (!ok) { var st = $('d-play'); st.classList.remove('shake'); void st.offsetWidth; st.classList.add('shake'); }
   renderMeter(); nextTrial();
 }
+$('i-text').addEventListener('input', function () { if (cur) resetSend(); });
 $('d-a').addEventListener('click', function () { tap('a'); });
 $('d-b').addEventListener('click', function () { tap('b'); });
 
@@ -2928,6 +2939,7 @@ function showInput() {
   if (mem) renderMemInput();
   show('s-input');
   startNag();
+  lockInput();
   if (!mem) try { $('i-text').focus(); } catch (e) {}
 }
 // ボスが見ている：時間がたつと急かしてくる（修羅場では時計の音も）
@@ -2953,7 +2965,7 @@ function startNag() {
 function renderMemInput() {
   var q = cur.q, pad = $('i-pad'), disp = $('i-disp'), ans = cur.ans, box, i;
   pad.textContent = ''; disp.textContent = '';
-  function btn(text, cls, act) { var b = el('button', cls, text); b.addEventListener('click', function () { act(); SFX.click(); renderMemInput(); }); return b; }
+  function btn(text, cls, act) { var b = el('button', cls, text); b.addEventListener('click', function () { if (inputLocked()) return; act(); SFX.click(); renderMemInput(); resetSend(); }); return b; }
   if (q.kind === 'digits') {
     disp.append(ans.length ? ans.join(' ') : '_', el('small', '', ans.length + ' / ' + q.level + ' けた'));
     box = el('div', 'numpad');
@@ -2981,7 +2993,26 @@ function renderMemInput() {
     pad.appendChild(box);
   }
 }
+function resetSend() { if (cur.emptyAsk) { cur.emptyAsk = false; $('i-send').className = 'btn'; $('i-send').textContent = '届ける'; } }
+function inputLocked() { return performance.now() < (cur && cur.lockUntil || 0); }
+function lockInput() {
+  var b = $('i-send'), my = token;
+  cur.lockUntil = performance.now() + INPUT_LOCK_MS; cur.emptyAsk = false;
+  b.disabled = true; b.className = 'btn'; b.textContent = '届ける';
+  setTimeout(function () { if (my === token) b.disabled = false; }, INPUT_LOCK_MS);
+}
+// 3. 何も答えていないときは、もう一度だけ聞く
+function answerEmpty() { return cur.q.kind ? !cur.ans.length : !$('i-text').value.trim(); }
 $('i-send').addEventListener('click', function () {
+  if (inputLocked()) return;
+  if (answerEmpty() && !cur.emptyAsk) {
+    var b = this, my = token;
+    cur.emptyAsk = true; SFX.ng();
+    b.className = 'btn again'; b.textContent = 'まだ何も答えていない。このまま届ける？';
+    cur.lockUntil = performance.now() + 1000; b.disabled = true;      // 聞いてすぐの1回は効かない（連打で通らないように）
+    setTimeout(function () { if (my === token) b.disabled = false; }, 1000);
+    return;
+  }
   var q = cur.q;
   if (q.kind) {
     var ans = cur.ans;
